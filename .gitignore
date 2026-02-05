@@ -1,0 +1,60 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.sublime-*
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build outputs
+*.jar
+*.war
+*.ear
+out/
+target/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+.eggs/
+
+# Logs
+*.log
+logs/
+
+# Temp
+*.tmp
+*.temp
+*.swp
+*~
+
+# Secrets
+.env
+*.pem
+*.key
+credentials.*
+
+# Claude Code
+CLAUDE.md
+.claude/

@@ -1,0 +1,14 @@
+# TLS Bypass Worker Dependencies
+# Python 3.9+ required
+
+# FastAPI web framework
+fastapi>=0.109.0
+
+# ASGI server
+uvicorn[standard]>=0.27.0
+
+# curl_cffi for TLS fingerprint impersonation
+curl-cffi>=0.7.0
+
+# Data validation (included with FastAPI but pinned for compatibility)
+pydantic>=2.0.0

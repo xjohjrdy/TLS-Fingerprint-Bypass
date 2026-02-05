@@ -1,0 +1,86 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.0.0-beta12'
+}
+
+group = 'com.bypasstls.burp'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Burp Suite Montoya API
+    compileOnly 'net.portswigger.burp.extensions:montoya-api:2024.12'
+
+    // OkHttp for async HTTP communication with Python sidecar
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // FlatLaf for modern Swing look and feel
+    implementation 'com.formdev:flatlaf:3.4'
+
+    // JSON processing
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'TLS Fingerprint Bypass',
+            'Implementation-Version': project.version,
+            'Extension-Name': 'TLS Fingerprint Bypass'
+        )
+    }
+}
+
+shadowJar {
+    archiveBaseName.set('tls-bypass-burp')
+    archiveClassifier.set('')
+    archiveVersion.set(project.version.toString())
+
+    // Relocate dependencies to avoid conflicts
+    relocate 'okhttp3', 'com.bypasstls.shaded.okhttp3'
+    relocate 'okio', 'com.bypasstls.shaded.okio'
+    relocate 'com.google.gson', 'com.bypasstls.shaded.gson'
+    relocate 'com.formdev.flatlaf', 'com.bypasstls.shaded.flatlaf'
+
+    mergeServiceFiles()
+
+    manifest {
+        attributes(
+            'Implementation-Title': 'TLS Fingerprint Bypass',
+            'Implementation-Version': project.version,
+            'Extension-Name': 'TLS Fingerprint Bypass'
+        )
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+// Include Python files in resources
+sourceSets {
+    main {
+        resources {
+            srcDirs = ['src/main/resources', 'python']
+            include '**/*'
+        }
+    }
+}
+
+// Copy python files to resources with proper path
+processResources {
+    from('python') {
+        into 'python'
+    }
+}
+
+// Build fat JAR by default
+build.dependsOn shadowJar
