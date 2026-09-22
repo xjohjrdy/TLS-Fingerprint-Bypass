@@ -5,7 +5,7 @@
  */
 package com.bypasstls.burp;
 
-import burp.api.montoya.persistence.PersistedObject;
+import burp.IBurpExtenderCallbacks;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -266,33 +266,37 @@ public class FilterConfig {
     private static final String KEY_URI_PATTERNS = "filterUriPatterns";
 
     /**
-     * Saves the current filter configuration to persistence.
+     * Saves the current filter configuration to Burp's extension settings.
+     * <p>
+     * Note: the legacy API stores these at user level (shared across projects),
+     * unlike Montoya's per-project extension data.
+     * </p>
      *
-     * @param persistence the Burp persistence object
+     * @param callbacks the Burp callbacks, or null to skip saving
      */
-    public void saveToPersistence(PersistedObject persistence) {
-        if (persistence == null) return;
+    public void saveToPersistence(IBurpExtenderCallbacks callbacks) {
+        if (callbacks == null) return;
 
         // Save filter mode
-        persistence.setString(KEY_FILTER_MODE, mode.name());
+        callbacks.saveExtensionSetting(KEY_FILTER_MODE, mode.name());
 
         // Save domains as comma-separated string
-        persistence.setString(KEY_DOMAINS, String.join(",", domains));
+        callbacks.saveExtensionSetting(KEY_DOMAINS, String.join(",", domains));
 
-        // Save URI patterns as comma-separated string (using | as delimiter since , might be in patterns)
-        persistence.setString(KEY_URI_PATTERNS, String.join("|", uriPatternStrings));
+        // Save URI patterns as |-separated string since , may appear in patterns
+        callbacks.saveExtensionSetting(KEY_URI_PATTERNS, String.join("|", uriPatternStrings));
     }
 
     /**
-     * Loads filter configuration from persistence.
+     * Loads filter configuration from Burp's extension settings.
      *
-     * @param persistence the Burp persistence object
+     * @param callbacks the Burp callbacks, or null to skip loading
      */
-    public void loadFromPersistence(PersistedObject persistence) {
-        if (persistence == null) return;
+    public void loadFromPersistence(IBurpExtenderCallbacks callbacks) {
+        if (callbacks == null) return;
 
         // Load filter mode
-        String modeStr = persistence.getString(KEY_FILTER_MODE);
+        String modeStr = callbacks.loadExtensionSetting(KEY_FILTER_MODE);
         if (modeStr != null && !modeStr.isEmpty()) {
             try {
                 this.mode = FilterMode.valueOf(modeStr);
@@ -302,7 +306,7 @@ public class FilterConfig {
         }
 
         // Load domains
-        String domainsStr = persistence.getString(KEY_DOMAINS);
+        String domainsStr = callbacks.loadExtensionSetting(KEY_DOMAINS);
         if (domainsStr != null && !domainsStr.isEmpty()) {
             domains.clear();
             for (String domain : domainsStr.split(",")) {
@@ -313,7 +317,7 @@ public class FilterConfig {
         }
 
         // Load URI patterns
-        String patternsStr = persistence.getString(KEY_URI_PATTERNS);
+        String patternsStr = callbacks.loadExtensionSetting(KEY_URI_PATTERNS);
         if (patternsStr != null && !patternsStr.isEmpty()) {
             uriPatterns.clear();
             uriPatternStrings.clear();

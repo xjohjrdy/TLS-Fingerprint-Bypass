@@ -52,31 +52,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
----
-
-### FlatLaf
-
-- **Project**: FlatLaf - Flat Look and Feel
-- **Version**: 3.4
-- **License**: Apache License 2.0
-- **Repository**: https://github.com/JFormDesigner/FlatLaf
-- **Copyright**: Copyright 2019-2024 FormDev Software GmbH
-
-```
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
----
 
 ## Python Dependencies
 
@@ -228,12 +203,13 @@ SOFTWARE.
 
 The following are required at runtime but not bundled with this project:
 
-### Burp Suite Montoya API
+### Burp Suite Extender API (burp-extender-api)
 
-- **Project**: Burp Suite Montoya API
+- **Project**: Burp Suite Extender API
 - **Provider**: PortSwigger Ltd.
-- **Documentation**: https://portswigger.github.io/burp-extensions-montoya-api/
-- **Note**: This project is an extension for Burp Suite. Burp Suite is proprietary software by PortSwigger Ltd. This extension uses the public Montoya API provided for extension development.
+- **Version**: 2.3
+- **Documentation**: https://portswigger.net/burp/extender/api/
+- **Note**: This project is an extension for Burp Suite. Burp Suite is proprietary software by PortSwigger Ltd. This extension uses the public legacy Extender API (`burp.IBurpExtender`) provided for extension development, and is provided by Burp at runtime rather than bundled.
 
 ---
 
@@ -245,7 +221,6 @@ All dependencies used in this project are compatible with the MIT License under 
 |------------|---------|---------------|
 | OkHttp | Apache 2.0 | ✓ Compatible with MIT |
 | Gson | Apache 2.0 | ✓ Compatible with MIT |
-| FlatLaf | Apache 2.0 | ✓ Compatible with MIT |
 | curl_cffi | MIT | ✓ Same license |
 | FastAPI | MIT | ✓ Same license |
 | Uvicorn | BSD 3-Clause | ✓ Compatible with MIT |

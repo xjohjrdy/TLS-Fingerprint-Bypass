@@ -5,10 +5,11 @@
  */
 package com.bypasstls.burp;
 
-import burp.api.montoya.logging.Logging;
+import com.bypasstls.burp.Logging;
 
 import java.io.*;
 import java.nio.file.*;
+import java.util.stream.Stream;
 
 /**
  * Extracts embedded Python resources from the JAR to the filesystem.
@@ -156,7 +157,7 @@ public class ResourceExtractor {
             Path targetDir = getExtractionDirectory();
             if (Files.exists(targetDir)) {
                 // Delete files in directory
-                try (var stream = Files.list(targetDir)) {
+                try (Stream<Path> stream = Files.list(targetDir)) {
                     stream.forEach(path -> {
                         try {
                             Files.deleteIfExists(path);

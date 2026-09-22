@@ -5,10 +5,8 @@
  */
 package com.bypasstls.burp.ui;
 
-import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.core.HighlightColor;
-import burp.api.montoya.logging.Logging;
-import burp.api.montoya.persistence.PersistedObject;
+import burp.IBurpExtenderCallbacks;
+import burp.ITab;
 import com.bypasstls.burp.*;
 
 import javax.swing.*;
@@ -31,15 +29,14 @@ import java.io.File;
  * </ul>
  * </p>
  */
-public class ConfigTab extends JPanel {
+public class ConfigTab extends JPanel implements ITab {
 
-    private final MontoyaApi api;
     private final ProcessManager processManager;
     private final PythonWorkerClient workerClient;
     private final TLSBypassHttpHandler httpHandler;
     private final FilterConfig filterConfig;
     private final Logging logging;
-    private final PersistedObject persistence;
+    private final IBurpExtenderCallbacks callbacks;
     private final String extractedScriptPath;
 
     // Configuration components
@@ -105,32 +102,40 @@ public class ConfigTab extends JPanel {
     /**
      * Creates a new ConfigTab instance.
      *
-     * @param api the Montoya API instance
+     * @param callbacks the Burp callbacks for saving settings
      * @param processManager the process manager for Python server
      * @param workerClient the worker client for communication
      * @param httpHandler the HTTP handler for request interception
      * @param filterConfig the filter configuration
      * @param logging the logging interface
-     * @param persistence the persistence object for saving settings
      * @param extractedScriptPath the path to the auto-extracted worker.py, or null if not available
      */
-    public ConfigTab(MontoyaApi api, ProcessManager processManager,
+    public ConfigTab(IBurpExtenderCallbacks callbacks, ProcessManager processManager,
                      PythonWorkerClient workerClient, TLSBypassHttpHandler httpHandler,
-                     FilterConfig filterConfig, Logging logging, PersistedObject persistence,
+                     FilterConfig filterConfig, Logging logging,
                      String extractedScriptPath) {
-        this.api = api;
+        this.callbacks = callbacks;
         this.processManager = processManager;
         this.workerClient = workerClient;
         this.httpHandler = httpHandler;
         this.filterConfig = filterConfig;
         this.logging = logging;
-        this.persistence = persistence;
         this.extractedScriptPath = extractedScriptPath;
 
         initializeUI();
         loadSettings();  // Load saved settings after UI is initialized
         setupLogListener();
         startStatsTimer();
+    }
+
+    @Override
+    public String getTabCaption() {
+        return "TLS Fingerprint Bypass";
+    }
+
+    @Override
+    public Component getUiComponent() {
+        return this;
     }
 
     private void initializeUI() {
@@ -140,9 +145,6 @@ public class ConfigTab extends JPanel {
         // Configure tooltip timing for better UX
         ToolTipManager.sharedInstance().setInitialDelay(300);    // Show after 300ms (default: 750ms)
         ToolTipManager.sharedInstance().setDismissDelay(15000);  // Stay visible for 15 seconds (default: 4s)
-
-        // Apply Burp theme
-        api.userInterface().applyThemeToComponent(this);
 
         // Create main split pane
         JSplitPane mainSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
@@ -158,14 +160,12 @@ public class ConfigTab extends JPanel {
         // Filter panel
         filterPanel = new FilterPanel(filterConfig, logging);
         filterPanel.setOnSettingsChanged(this::saveSettings);  // Auto-save when filter changes
-        api.userInterface().applyThemeToComponent(filterPanel);
         topPanel.add(filterPanel, BorderLayout.CENTER);
 
         mainSplitPane.setTopComponent(topPanel);
 
         // Bottom panel - Log
         logPanel = new LogPanel();
-        api.userInterface().applyThemeToComponent(logPanel);
         mainSplitPane.setBottomComponent(logPanel);
 
         add(mainSplitPane, BorderLayout.CENTER);
@@ -441,7 +441,7 @@ public class ConfigTab extends JPanel {
             return;
         }
 
-        SwingWorker<String, Void> worker = new SwingWorker<>() {
+        SwingWorker<String, Void> worker = new SwingWorker<String, Void>() {
             @Override
             protected String doInBackground() {
                 return processManager.validatePythonEnvironment(pythonPath);
@@ -558,7 +558,7 @@ public class ConfigTab extends JPanel {
         progressDialog.setLocationRelativeTo(this);
 
         // Run setup in background
-        SwingWorker<ProcessManager.SetupResult, String> worker = new SwingWorker<>() {
+        SwingWorker<ProcessManager.SetupResult, String> worker = new SwingWorker<ProcessManager.SetupResult, String>() {
             @Override
             protected ProcessManager.SetupResult doInBackground() {
                 return processManager.setupVirtualEnvironment(
@@ -639,7 +639,7 @@ public class ConfigTab extends JPanel {
         statusLabel.setForeground(Color.ORANGE);
 
         // Start server in background
-        SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+        SwingWorker<Boolean, Void> worker = new SwingWorker<Boolean, Void>() {
             @Override
             protected Boolean doInBackground() {
                 return processManager.startPythonServer(pythonPath, scriptPath, port);
@@ -712,7 +712,7 @@ public class ConfigTab extends JPanel {
     }
 
     private void testConnection() {
-        SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+        SwingWorker<Boolean, Void> worker = new SwingWorker<Boolean, Void>() {
             @Override
             protected Boolean doInBackground() {
                 return workerClient.checkConnection();
@@ -758,33 +758,22 @@ public class ConfigTab extends JPanel {
 
     private void updateHighlightColor() {
         String selected = (String) highlightColorCombo.getSelectedItem();
-        HighlightColor color = getHighlightColorFromName(selected);
+        String color = getHighlightColorFromName(selected);
         httpHandler.setHighlightColor(color);
         logging.logToOutput("[ConfigTab] Highlight color changed to: " + selected);
     }
 
     /**
-     * Converts a color name to HighlightColor enum.
+     * Converts a display name to the legacy API's lowercase color name.
      *
-     * @param name the color name
-     * @return the HighlightColor, or null if "None" is selected
+     * @param name the display name from the combo box
+     * @return the lowercase color name, or null for "None"
      */
-    private HighlightColor getHighlightColorFromName(String name) {
+    private String getHighlightColorFromName(String name) {
         if (name == null || HIGHLIGHT_NONE.equals(name)) {
             return null;
         }
-        switch (name.toLowerCase()) {
-            case "green": return HighlightColor.GREEN;
-            case "blue": return HighlightColor.BLUE;
-            case "cyan": return HighlightColor.CYAN;
-            case "yellow": return HighlightColor.YELLOW;
-            case "orange": return HighlightColor.ORANGE;
-            case "red": return HighlightColor.RED;
-            case "pink": return HighlightColor.PINK;
-            case "magenta": return HighlightColor.MAGENTA;
-            case "gray": return HighlightColor.GRAY;
-            default: return HighlightColor.GREEN;
-        }
+        return name.toLowerCase();
     }
 
     private void showError(String message) {
@@ -799,17 +788,17 @@ public class ConfigTab extends JPanel {
      * Loads saved settings from persistence.
      */
     private void loadSettings() {
-        if (persistence == null) return;
+        if (callbacks == null) return;
 
         try {
             // Load Python path
-            String pythonPath = persistence.getString(KEY_PYTHON_PATH);
+            String pythonPath = callbacks.loadExtensionSetting(KEY_PYTHON_PATH);
             if (pythonPath != null && !pythonPath.isEmpty()) {
                 pythonPathField.setText(pythonPath);
             }
 
             // Load script path - use extracted path as default if no saved value
-            String scriptPath = persistence.getString(KEY_SCRIPT_PATH);
+            String scriptPath = callbacks.loadExtensionSetting(KEY_SCRIPT_PATH);
             if (scriptPath != null && !scriptPath.isEmpty()) {
                 scriptPathField.setText(scriptPath);
             } else if (extractedScriptPath != null && !extractedScriptPath.isEmpty()) {
@@ -819,19 +808,19 @@ public class ConfigTab extends JPanel {
             }
 
             // Load server port
-            String port = persistence.getString(KEY_SERVER_PORT);
+            String port = callbacks.loadExtensionSetting(KEY_SERVER_PORT);
             if (port != null && !port.isEmpty()) {
                 portField.setText(port);
             }
 
             // Load impersonate target
-            String target = persistence.getString(KEY_IMPERSONATE_TARGET);
+            String target = callbacks.loadExtensionSetting(KEY_IMPERSONATE_TARGET);
             if (target != null && !target.isEmpty()) {
                 impersonateCombo.setSelectedItem(target);
             }
 
             // Load log requests setting
-            String logRequests = persistence.getString(KEY_LOG_REQUESTS);
+            String logRequests = callbacks.loadExtensionSetting(KEY_LOG_REQUESTS);
             if (logRequests != null) {
                 boolean log = Boolean.parseBoolean(logRequests);
                 logRequestsCheckbox.setSelected(log);
@@ -839,14 +828,14 @@ public class ConfigTab extends JPanel {
             }
 
             // Load highlight color setting
-            String highlightColor = persistence.getString(KEY_HIGHLIGHT_COLOR);
+            String highlightColor = callbacks.loadExtensionSetting(KEY_HIGHLIGHT_COLOR);
             if (highlightColor != null && !highlightColor.isEmpty()) {
                 highlightColorCombo.setSelectedItem(highlightColor);
                 updateHighlightColor();
             }
 
             // Load auto user-agent setting
-            String autoUserAgent = persistence.getString(KEY_AUTO_USER_AGENT);
+            String autoUserAgent = callbacks.loadExtensionSetting(KEY_AUTO_USER_AGENT);
             if (autoUserAgent != null) {
                 boolean auto = Boolean.parseBoolean(autoUserAgent);
                 autoUserAgentCheckbox.setSelected(auto);
@@ -863,19 +852,19 @@ public class ConfigTab extends JPanel {
      * Saves current settings to persistence.
      */
     private void saveSettings() {
-        if (persistence == null) return;
+        if (callbacks == null) return;
 
         try {
-            persistence.setString(KEY_PYTHON_PATH, pythonPathField.getText());
-            persistence.setString(KEY_SCRIPT_PATH, scriptPathField.getText());
-            persistence.setString(KEY_SERVER_PORT, portField.getText());
-            persistence.setString(KEY_IMPERSONATE_TARGET, (String) impersonateCombo.getSelectedItem());
-            persistence.setString(KEY_LOG_REQUESTS, String.valueOf(logRequestsCheckbox.isSelected()));
-            persistence.setString(KEY_HIGHLIGHT_COLOR, (String) highlightColorCombo.getSelectedItem());
-            persistence.setString(KEY_AUTO_USER_AGENT, String.valueOf(autoUserAgentCheckbox.isSelected()));
+            callbacks.saveExtensionSetting(KEY_PYTHON_PATH, pythonPathField.getText());
+            callbacks.saveExtensionSetting(KEY_SCRIPT_PATH, scriptPathField.getText());
+            callbacks.saveExtensionSetting(KEY_SERVER_PORT, portField.getText());
+            callbacks.saveExtensionSetting(KEY_IMPERSONATE_TARGET, (String) impersonateCombo.getSelectedItem());
+            callbacks.saveExtensionSetting(KEY_LOG_REQUESTS, String.valueOf(logRequestsCheckbox.isSelected()));
+            callbacks.saveExtensionSetting(KEY_HIGHLIGHT_COLOR, (String) highlightColorCombo.getSelectedItem());
+            callbacks.saveExtensionSetting(KEY_AUTO_USER_AGENT, String.valueOf(autoUserAgentCheckbox.isSelected()));
 
             // Also save filter configuration
-            filterConfig.saveToPersistence(persistence);
+            filterConfig.saveToPersistence(callbacks);
 
             logging.logToOutput("[ConfigTab] Settings saved to persistence");
         } catch (Exception e) {

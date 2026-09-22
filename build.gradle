@@ -7,8 +7,18 @@ group = 'com.bypasstls.burp'
 version = '1.0.0'
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+// `options.release` is required in addition to the compatibility settings above.
+// sourceCompatibility/targetCompatibility only pin the bytecode version and the
+// language level - they do NOT restrict which JDK APIs may be referenced. Without
+// this, a call to a Java 17-only API (e.g. java.util.HexFormat) compiles cleanly
+// and only fails at runtime on the older JRE that ships with older Burp versions.
+tasks.withType(JavaCompile) {
+    options.release = 11
+    options.encoding = 'UTF-8'
 }
 
 repositories {
@@ -16,14 +26,11 @@ repositories {
 }
 
 dependencies {
-    // Burp Suite Montoya API
-    compileOnly 'net.portswigger.burp.extensions:montoya-api:2024.12'
+    // Burp Suite legacy Extender API - provided by Burp at runtime, never bundled
+    compileOnly 'net.portswigger.burp.extender:burp-extender-api:2.3'
 
-    // OkHttp for async HTTP communication with Python sidecar
+    // OkHttp for HTTP communication with Python sidecar
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
-    // FlatLaf for modern Swing look and feel
-    implementation 'com.formdev:flatlaf:3.4'
 
     // JSON processing
     implementation 'com.google.code.gson:gson:2.10.1'
@@ -44,13 +51,10 @@ shadowJar {
     archiveClassifier.set('')
     archiveVersion.set(project.version.toString())
 
-    // Relocate dependencies to avoid conflicts
+    // Relocate dependencies to avoid conflicts with Burp's own classpath
     relocate 'okhttp3', 'com.bypasstls.shaded.okhttp3'
     relocate 'okio', 'com.bypasstls.shaded.okio'
     relocate 'com.google.gson', 'com.bypasstls.shaded.gson'
-    relocate 'com.formdev.flatlaf', 'com.bypasstls.shaded.flatlaf'
-
-    mergeServiceFiles()
 
     manifest {
         attributes(
@@ -61,11 +65,7 @@ shadowJar {
     }
 }
 
-tasks.withType(JavaCompile) {
-    options.encoding = 'UTF-8'
-}
-
-// Include Python files in resources
+// Bundle the Python worker into the JAR (ResourceExtractor unpacks it at runtime)
 sourceSets {
     main {
         resources {
@@ -75,12 +75,10 @@ sourceSets {
     }
 }
 
-// Copy python files to resources with proper path
 processResources {
     from('python') {
         into 'python'
     }
 }
 
-// Build fat JAR by default
 build.dependsOn shadowJar

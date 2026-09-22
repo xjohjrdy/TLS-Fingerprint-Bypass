@@ -41,8 +41,9 @@ A professional Burp Suite extension that bypasses TLS fingerprinting detection u
 ## Requirements
 
 ### Java (Burp Extension)
-- Java 17 or higher
-- Burp Suite Professional/Community with Montoya API support
+- Java 11 or higher
+- Burp Suite Professional/Community with legacy Extender API support (any version exposing
+  the `burp.IBurpExtender` API)
 
 ### Python (Worker Server)
 - Python 3.9 or higher
@@ -133,7 +134,7 @@ All your configuration settings are automatically saved and will be restored whe
 | Filter mode | ✓ |
 | Domain/URI pattern list | ✓ |
 
-Settings are stored in the Burp Suite project file, so different projects can have different configurations.
+Settings are stored in Burp's user-level extension settings, so they are shared across projects.
 
 ### Highlight Color Customization
 
@@ -202,18 +203,20 @@ Bypass_TLS_Detection/
 ├── THIRD_PARTY_LICENSES.md          # Third-party license notices
 ├── README.md                        # This file
 ├── CLAUDE.md                        # Development documentation
+├── src/main/java/burp/
+│   └── BurpExtender.java            # Legacy API entry point (reflection target)
 ├── src/main/java/com/bypasstls/burp/
-│   ├── BurpExtension.java           # Main entry point
-│   ├── TLSBypassHttpHandler.java    # HTTP request handler
+│   ├── BurpExtension.java           # Component wiring
+│   ├── TLSBypassHttpHandler.java    # HTTP request handler (IHttpListener)
 │   ├── PythonWorkerClient.java      # Python worker communication
 │   ├── ProcessManager.java          # Python process lifecycle
 │   ├── FilterConfig.java            # Filter configuration
+│   ├── Logging.java                 # Logging adapter
+│   ├── ResourceExtractor.java       # Unpacks bundled Python files
 │   └── ui/
-│       ├── ConfigTab.java           # Main configuration tab
+│       ├── ConfigTab.java           # Main configuration tab (ITab)
 │       ├── FilterPanel.java         # Filter settings panel
 │       └── LogPanel.java            # Request log viewer
-├── src/main/resources/META-INF/services/
-│   └── burp.api.montoya.BurpExtension
 └── python/
     ├── worker.py                    # FastAPI + curl_cffi server
     └── requirements.txt             # Python dependencies
@@ -226,7 +229,7 @@ Bypass_TLS_Detection/
 git clone https://github.com/your-repo/tls-bypass-burp.git
 cd tls-bypass-burp
 
-# Build with Gradle (requires Java 17+)
+# Build with Gradle (requires Java 11+)
 ./gradlew build
 
 # Create fat JAR with dependencies
@@ -269,7 +272,7 @@ For third-party license information, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_L
 ## Acknowledgments
 
 - [curl_cffi](https://github.com/lexiforest/curl_cffi) - Python binding for curl-impersonate (MIT License)
-- [Burp Suite Montoya API](https://portswigger.github.io/burp-extensions-montoya-api/) - PortSwigger's extension API
+- [Burp Suite Extender API](https://portswigger.net/burp/extender/api/) - PortSwigger's extension API
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework (MIT License)
 
 ## Contributing

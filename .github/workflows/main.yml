@@ -2,6 +2,9 @@ name: Build & Release Burp Extension
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*' # Kích hoạt khi bạn push tag dạng v1.0.0, v1.0.1...
   workflow_dispatch: # Cho phép bấm build thủ công từ web UI

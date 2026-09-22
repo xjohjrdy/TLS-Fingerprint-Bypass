@@ -5,24 +5,25 @@
  */
 package com.bypasstls.burp;
 
-import burp.api.montoya.core.ByteArray;
-import burp.api.montoya.http.message.HttpHeader;
-import burp.api.montoya.http.message.requests.HttpRequest;
-import burp.api.montoya.http.message.responses.HttpResponse;
-import burp.api.montoya.logging.Logging;
+import burp.IExtensionHelpers;
+import burp.IHttpService;
+import burp.IRequestInfo;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import okhttp3.*;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 
 /**
  * HTTP client for communicating with the Python FastAPI worker.
  * <p>
- * Handles serialization of Burp HTTP requests to JSON, forwarding to the Python
- * worker, and deserialization of responses back to Burp HttpResponse objects.
+ * Handles serialization of raw Burp HTTP requests to JSON, forwarding to the
+ * Python worker, and reconstruction of the worker's JSON reply into raw HTTP
+ * response bytes suitable for handing back to Burp's legacy API.
  * </p>
  * <p>
  * Uses OkHttp with connection pooling for efficient communication.
@@ -36,11 +37,9 @@ public class PythonWorkerClient {
     private static final int KEEP_ALIVE_MINUTES = 5;
 
     private final Logging logging;
+    private final IExtensionHelpers helpers;
     private final OkHttpClient httpClient;
     private final ExecutorService executor;
-
-    // Response cache for async operations
-    private final Map<String, HttpResponse> responseCache;
 
     // Configuration
     private String serverUrl = "http://127.0.0.1:8787";
@@ -54,11 +53,12 @@ public class PythonWorkerClient {
     /**
      * Creates a new PythonWorkerClient instance.
      *
-     * @param logging the Burp logging interface
+     * @param logging the logging adapter
+     * @param helpers the Burp extension helpers used to parse raw requests
      */
-    public PythonWorkerClient(Logging logging) {
+    public PythonWorkerClient(Logging logging, IExtensionHelpers helpers) {
         this.logging = logging;
-        this.responseCache = new ConcurrentHashMap<>();
+        this.helpers = helpers;
         this.executor = Executors.newFixedThreadPool(10, r -> {
             Thread t = new Thread(r, "WorkerClient");
             t.setDaemon(true);
@@ -203,44 +203,42 @@ public class PythonWorkerClient {
     }
 
     /**
-     * Forwards a Burp HTTP request to the Python worker synchronously.
+     * Forwards a raw Burp HTTP request to the Python worker synchronously.
      *
-     * @param burpRequest the Burp HTTP request to forward
-     * @return the HTTP response from the target server (via Python worker)
+     * @param request the raw request bytes
+     * @param httpService the service the request targets
+     * @return the raw HTTP response bytes from the target server (via Python worker)
      * @throws IOException if the request fails
      */
-    public HttpResponse forwardRequest(HttpRequest burpRequest) throws IOException {
-        // Build request payload
-        JsonObject payload = buildRequestPayload(burpRequest);
+    public byte[] forwardRequest(byte[] request, IHttpService httpService) throws IOException {
+        JsonObject payload = buildRequestPayload(request, httpService);
 
-        // Send to Python worker
         RequestBody body = RequestBody.create(payload.toString(), JSON_MEDIA_TYPE);
-        Request request = new Request.Builder()
+        Request httpRequest = new Request.Builder()
             .url(serverUrl + "/proxy")
             .post(body)
             .build();
 
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = httpClient.newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
                 String errorBody = response.body() != null ? response.body().string() : "No error details";
                 throw new IOException("Worker returned error " + response.code() + ": " + errorBody);
             }
-
-            String responseBody = response.body().string();
-            return parseWorkerResponse(responseBody);
+            return parseWorkerResponse(response.body().string());
         }
     }
 
     /**
-     * Forwards a Burp HTTP request to the Python worker asynchronously.
+     * Forwards a raw Burp HTTP request to the Python worker asynchronously.
      *
-     * @param burpRequest the Burp HTTP request to forward
-     * @return a CompletableFuture that will contain the response
+     * @param request the raw request bytes
+     * @param httpService the service the request targets
+     * @return a CompletableFuture that will contain the response bytes
      */
-    public CompletableFuture<HttpResponse> forwardRequestAsync(HttpRequest burpRequest) {
+    public CompletableFuture<byte[]> forwardRequestAsync(byte[] request, IHttpService httpService) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return forwardRequest(burpRequest);
+                return forwardRequest(request, httpService);
             } catch (IOException e) {
                 logging.logToError("[WorkerClient] Async forward failed: " + e.getMessage());
                 return null;
@@ -249,36 +247,48 @@ public class PythonWorkerClient {
     }
 
     /**
-     * Builds the JSON payload for the Python worker from a Burp request.
+     * Builds the JSON payload for the Python worker from a raw Burp request.
+     * <p>
+     * The JSON shape is unchanged from the Montoya implementation - the Python
+     * worker's Pydantic models are the other half of this contract.
+     * </p>
      */
-    private JsonObject buildRequestPayload(HttpRequest burpRequest) {
+    private JsonObject buildRequestPayload(byte[] request, IHttpService httpService) {
         JsonObject payload = new JsonObject();
 
-        // Method and URL
-        payload.addProperty("method", burpRequest.method());
-        payload.addProperty("url", burpRequest.url());
+        IRequestInfo info = helpers.analyzeRequest(httpService, request);
 
-        // Headers
+        payload.addProperty("method", info.getMethod());
+        payload.addProperty("url", info.getUrl().toString());
+
+        // Headers: element 0 is the request line (e.g. "GET / HTTP/1.1"), skip it
         JsonObject headers = new JsonObject();
-        for (HttpHeader header : burpRequest.headers()) {
-            String name = header.name();
-            String value = header.value();
+        List<String> headerLines = info.getHeaders();
+        for (int i = 1; i < headerLines.size(); i++) {
+            String header = headerLines.get(i);
+            int colon = header.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            String name = header.substring(0, colon).trim();
+            String value = header.substring(colon + 1).trim();
 
-            // Skip pseudo-headers and headers that will be set by curl_cffi
+            // Skip headers curl_cffi sets itself
             if (name.startsWith(":") || name.equalsIgnoreCase("content-length")) {
                 continue;
             }
-
             headers.addProperty(name, value);
         }
         payload.add("headers", headers);
 
-        // Body
-        if (burpRequest.body() != null && burpRequest.body().length() > 0) {
-            byte[] bodyBytes = burpRequest.body().getBytes();
-            String base64Body = Base64.getEncoder().encodeToString(bodyBytes);
-            payload.addProperty("body", base64Body);
-            payload.addProperty("body_encoding", "base64");
+        // Body: getBodyOffset() gives the exact start of the message body
+        int bodyOffset = info.getBodyOffset();
+        if (bodyOffset > 0 && bodyOffset < request.length) {
+            byte[] bodyBytes = Arrays.copyOfRange(request, bodyOffset, request.length);
+            if (bodyBytes.length > 0) {
+                payload.addProperty("body", Base64.getEncoder().encodeToString(bodyBytes));
+                payload.addProperty("body_encoding", "base64");
+            }
         }
 
         // Impersonation and options
@@ -292,89 +302,90 @@ public class PythonWorkerClient {
     }
 
     /**
-     * Parses the JSON response from the Python worker into a Burp HttpResponse.
+     * Parses the JSON response from the Python worker into raw HTTP response bytes.
+     * <p>
+     * Content-Length is recomputed from the decoded body and transfer-encoding /
+     * content-encoding / connection are dropped, because curl_cffi already
+     * decompressed the body.
+     * </p>
      */
-    private HttpResponse parseWorkerResponse(String jsonResponse) throws IOException {
+    private byte[] parseWorkerResponse(String jsonResponse) throws IOException {
         try {
             JsonObject json = JsonParser.parseString(jsonResponse).getAsJsonObject();
 
             int statusCode = json.get("status_code").getAsInt();
             String reason = json.has("reason") ? json.get("reason").getAsString() : "OK";
 
-            // Parse headers first to get Content-Type charset
             JsonObject headers = json.has("headers") ? json.getAsJsonObject("headers") : new JsonObject();
             String charset = extractCharsetFromHeaders(headers);
 
-            // Get body data first to calculate correct Content-Length
             byte[] bodyBytes = null;
             if (json.has("body") && !json.get("body").isJsonNull()) {
                 String bodyData = json.get("body").getAsString();
-                String bodyEncoding = json.has("body_encoding") ?
-                    json.get("body_encoding").getAsString() : "text";
+                String bodyEncoding = json.has("body_encoding")
+                    ? json.get("body_encoding").getAsString() : "text";
 
                 if ("base64".equals(bodyEncoding)) {
                     bodyBytes = Base64.getDecoder().decode(bodyData);
                 } else {
-                    // For text content, use the charset from Content-Type or default to UTF-8
-                    java.nio.charset.Charset textCharset;
+                    Charset textCharset;
                     try {
-                        textCharset = charset != null ?
-                            java.nio.charset.Charset.forName(charset) :
-                            java.nio.charset.StandardCharsets.UTF_8;
+                        textCharset = charset != null
+                            ? Charset.forName(charset) : StandardCharsets.UTF_8;
                     } catch (Exception e) {
-                        textCharset = java.nio.charset.StandardCharsets.UTF_8;
+                        textCharset = StandardCharsets.UTF_8;
                     }
                     bodyBytes = bodyData.getBytes(textCharset);
                 }
             }
 
-            // Build HTTP response headers
-            StringBuilder httpResponseStr = new StringBuilder();
-            httpResponseStr.append("HTTP/1.1 ").append(statusCode).append(" ").append(reason).append("\r\n");
+            StringBuilder head = new StringBuilder();
+            head.append("HTTP/1.1 ").append(statusCode).append(" ").append(reason).append("\r\n");
 
-            // Headers to skip - these will be recalculated or are not applicable
             Set<String> skipHeaders = new HashSet<>(Arrays.asList(
-                "transfer-encoding",    // We provide full body, not chunked
-                "content-encoding",     // curl_cffi auto-decompresses, so this is no longer valid
-                "content-length",       // Will be recalculated based on actual body size
-                "connection"            // Will be set explicitly
+                "transfer-encoding",
+                "content-encoding",
+                "content-length",
+                "connection"
             ));
 
-            // Add headers from response
             for (String key : headers.keySet()) {
-                String lowerKey = key.toLowerCase();
-                if (!skipHeaders.contains(lowerKey)) {
-                    String value = headers.get(key).getAsString();
-                    httpResponseStr.append(key).append(": ").append(value).append("\r\n");
+                if (!skipHeaders.contains(key.toLowerCase())) {
+                    head.append(key).append(": ").append(headers.get(key).getAsString()).append("\r\n");
                 }
             }
 
-            // Add Connection header for HTTP/1.1 compatibility
-            httpResponseStr.append("Connection: close\r\n");
+            head.append("Connection: close\r\n");
+            head.append("Content-Length: ")
+                .append(bodyBytes != null ? bodyBytes.length : 0).append("\r\n");
+            head.append("\r\n");
 
-            // Add correct Content-Length header
-            if (bodyBytes != null && bodyBytes.length > 0) {
-                httpResponseStr.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
-            } else {
-                httpResponseStr.append("Content-Length: 0\r\n");
+            byte[] headBytes = head.toString().getBytes(StandardCharsets.ISO_8859_1);
+            if (bodyBytes == null || bodyBytes.length == 0) {
+                return headBytes;
             }
 
-            httpResponseStr.append("\r\n");
-
-            // Build final response with body
-            if (bodyBytes != null && bodyBytes.length > 0) {
-                String headersPart = httpResponseStr.toString();
-                byte[] headersBytes = headersPart.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
-                byte[] fullResponse = new byte[headersBytes.length + bodyBytes.length];
-                System.arraycopy(headersBytes, 0, fullResponse, 0, headersBytes.length);
-                System.arraycopy(bodyBytes, 0, fullResponse, headersBytes.length, bodyBytes.length);
-                return HttpResponse.httpResponse(ByteArray.byteArray(fullResponse));
-            }
-
-            return HttpResponse.httpResponse(httpResponseStr.toString());
+            byte[] full = new byte[headBytes.length + bodyBytes.length];
+            System.arraycopy(headBytes, 0, full, 0, headBytes.length);
+            System.arraycopy(bodyBytes, 0, full, headBytes.length, bodyBytes.length);
+            return full;
 
         } catch (Exception e) {
             throw new IOException("Failed to parse worker response: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extracts the status code from raw response bytes.
+     *
+     * @param response the raw HTTP response
+     * @return the status code, or 0 if it cannot be parsed
+     */
+    public int parseStatusCode(byte[] response) {
+        try {
+            return helpers.analyzeResponse(response).getStatusCode();
+        } catch (Exception e) {
+            return 0;
         }
     }
 
@@ -402,35 +413,6 @@ public class PythonWorkerClient {
     }
 
     /**
-     * Caches a response for later retrieval.
-     *
-     * @param key the cache key
-     * @param response the response to cache
-     */
-    public void cacheResponse(String key, HttpResponse response) {
-        responseCache.put(key, response);
-    }
-
-    /**
-     * Retrieves and removes a cached response.
-     *
-     * @param key the cache key
-     * @return the cached response, or null if not found
-     */
-    public HttpResponse getCachedResponse(String key) {
-        return responseCache.remove(key);
-    }
-
-    /**
-     * Generates a unique cache key for a request.
-     *
-     * @return a unique cache key
-     */
-    public String generateCacheKey() {
-        return UUID.randomUUID().toString();
-    }
-
-    /**
      * Shuts down the client, releasing all resources.
      */
     public void shutdown() {
@@ -438,7 +420,6 @@ public class PythonWorkerClient {
         executor.shutdownNow();
         httpClient.dispatcher().executorService().shutdown();
         httpClient.connectionPool().evictAll();
-        responseCache.clear();
     }
 
     /**

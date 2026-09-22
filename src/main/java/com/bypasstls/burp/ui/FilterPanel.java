@@ -5,7 +5,7 @@
  */
 package com.bypasstls.burp.ui;
 
-import burp.api.montoya.logging.Logging;
+import com.bypasstls.burp.Logging;
 import com.bypasstls.burp.FilterConfig;
 import com.bypasstls.burp.FilterConfig.FilterMode;
 

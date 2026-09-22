@@ -5,7 +5,7 @@
  */
 package com.bypasstls.burp;
 
-import burp.api.montoya.logging.Logging;
+import com.bypasstls.burp.Logging;
 
 import java.io.*;
 import java.nio.file.*;
