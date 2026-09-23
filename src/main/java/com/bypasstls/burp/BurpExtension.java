@@ -9,6 +9,9 @@ import burp.IBurpExtenderCallbacks;
 import burp.IExtensionHelpers;
 import com.bypasstls.burp.ui.ConfigTab;
 
+import javax.swing.SwingUtilities;
+import java.lang.reflect.InvocationTargetException;
+
 /**
  * Main entry point for the TLS Fingerprint Bypass Burp Suite extension.
  * <p>
@@ -57,13 +60,13 @@ public class BurpExtension {
             // Initialize components
             initializeComponents();
 
+            // Register the Swing tab, strictly on the EDT, through Burp's
+            // appearance pass. See registerConfigTab() for why both matter.
+            registerConfigTab(callbacks.getHelpers());
+
             // Register HTTP listener for request interception
             callbacks.registerHttpListener(httpHandler);
             logging.logToOutput("[+] HTTP listener registered");
-
-            // Register configuration tab in Burp UI
-            callbacks.addSuiteTab(configTab);
-            logging.logToOutput("[+] Configuration tab registered");
 
             // Register unload handler for cleanup
             callbacks.registerExtensionStateListener(this::onUnload);
@@ -81,7 +84,12 @@ public class BurpExtension {
     }
 
     /**
-     * Initializes all extension components in the correct order.
+     * Initializes the non-UI extension components.
+     * <p>
+     * None of these are Swing containers, so they are safe to build on Burp's
+     * registering thread. The one component that needs different treatment is
+     * {@link ConfigTab}; see {@link #registerConfigTab}.
+     * </p>
      */
     private void initializeComponents() {
         IExtensionHelpers helpers = callbacks.getHelpers();
@@ -111,11 +119,70 @@ public class BurpExtension {
         // Create HTTP listener for request interception
         this.httpHandler = new TLSBypassHttpHandler(workerClient, filterConfig, logging, helpers);
         logging.logToOutput("[+] HTTP listener initialized");
+    }
 
-        // Create configuration tab with extracted script path
-        this.configTab = new ConfigTab(callbacks, processManager, workerClient, httpHandler,
-                                       filterConfig, logging, extractedScriptPath);
-        logging.logToOutput("[+] Configuration tab initialized");
+    /**
+     * Creates the configuration tab and hands it to Burp.
+     * <p>
+     * <b>Diagnosing the "check box only redraws on hover" bug.</b> A test
+     * extension registered four otherwise identical panels, varying exactly two
+     * things: the thread that built them, and whether
+     * {@link IBurpExtenderCallbacks#customizeUiComponent} was applied.
+     * </p>
+     * <pre>
+     *   A: built off-EDT, no customize  -> broken
+     *   B: built on EDT,  customize     -> fine
+     *   C: built on EDT,  no customize  -> broken
+     *   D: built off-EDT, customize     -> fine
+     * </pre>
+     * <p>
+     * The building thread therefore is <em>not</em> the deciding factor &mdash;
+     * C and D differ on it and still land on opposite outcomes. The deciding
+     * factor is {@code customizeUiComponent}: the two panels that called it work,
+     * the two that skipped it do not. Without that call the components respond to
+     * input correctly (the model changes, listeners fire) but their repaint
+     * requests never reach the screen, so the new state only appears when some
+     * unrelated event &mdash; hovering, or clicking a sibling control &mdash;
+     * forces a full redraw.
+     * </p>
+     * <p>
+     * The building thread is still worth getting right, hence the
+     * {@link SwingUtilities#invokeAndWait} below: Burp's API reference states
+     * that callbacks touching components must be invoked on the EDT, and Burp
+     * calls {@code registerExtenderCallbacks} on its own loader thread.
+     * </p>
+     *
+     * @param helpers the Burp helpers handed to the tab's dependencies
+     */
+    private void registerConfigTab(IExtensionHelpers helpers) {
+        Runnable create = () -> {
+            this.configTab = new ConfigTab(callbacks, processManager, workerClient, httpHandler,
+                                           filterConfig, logging, extractedScriptPath);
+
+            // The load-bearing call. Burp installs the UI delegate that keeps a
+            // plugin's component tree in step with its own look and, crucially,
+            // participates in getting its paint requests onto the screen.
+            callbacks.customizeUiComponent(configTab);
+
+            callbacks.addSuiteTab(configTab);
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            create.run();
+        } else {
+            try {
+                SwingUtilities.invokeAndWait(create);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logging.logToError("[!] Interrupted while creating the configuration tab: " + e);
+                return;
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                logging.logToError("[!] Failed to create the configuration tab: " + cause);
+                return;
+            }
+        }
+        logging.logToOutput("[+] Configuration tab initialized, customized and registered");
     }
 
     /**
